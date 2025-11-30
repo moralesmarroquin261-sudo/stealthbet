@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect, useRef } from 'react';
+import { useState, useEffect, useRef, useCallback } from 'react';
 import { useAccount, useWalletClient } from 'wagmi';
 import { ConnectButton } from '@rainbow-me/rainbowkit';
 import { BrowserProvider, ethers } from 'ethers';
@@ -108,10 +108,10 @@ export default function BetPage() {
     };
 
     initFhevm();
-  }, [isConnected, address, walletClient, fhevmInstance]);
+  }, [isConnected, address, walletClient, fhevmInstance, checkExistingBet]);
 
   // Check if user has existing bet
-  const checkExistingBet = async (provider: any) => {
+  const checkExistingBet = useCallback(async (provider: any) => {
     try {
       const ethersProvider = new BrowserProvider(provider);
       const signer = await ethersProvider.getSigner();
@@ -124,7 +124,7 @@ export default function BetPage() {
     } catch (e) {
       console.log('No existing bet found');
     }
-  };
+  }, [address]);
 
   // Submit encrypted bet
   const handleSubmitBet = async () => {
@@ -433,7 +433,7 @@ export default function BetPage() {
               </h3>
               <p className="text-dark-300 mb-6">
                 Click the button below to decrypt and view your bet amount. 
-                You'll need to sign a message to prove ownership.
+                You&apos;ll need to sign a message to prove ownership.
               </p>
 
               <button
