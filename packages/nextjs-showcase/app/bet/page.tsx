@@ -56,6 +56,22 @@ export default function BetPage() {
   const [decryptError, setDecryptError] = useState<string | null>(null);
   const [countdown, setCountdown] = useState(0);
 
+  // Check if user has existing bet
+  const checkExistingBet = useCallback(async (provider: any) => {
+    try {
+      const ethersProvider = new BrowserProvider(provider);
+      const signer = await ethersProvider.getSigner();
+      const contract = new ethers.Contract(CONTRACT_ADDRESS, CONTRACT_ABI, signer);
+      
+      const hasBet = await contract.hasUserBet(address);
+      if (hasBet) {
+        setCanDecrypt(true);
+      }
+    } catch (e) {
+      console.log('No existing bet found');
+    }
+  }, [address]);
+
   // Initialize FHEVM
   useEffect(() => {
     if (!isConnected || !address || !walletClient || isInitializingRef.current || fhevmInstance) {
@@ -109,22 +125,6 @@ export default function BetPage() {
 
     initFhevm();
   }, [isConnected, address, walletClient, fhevmInstance, checkExistingBet]);
-
-  // Check if user has existing bet
-  const checkExistingBet = useCallback(async (provider: any) => {
-    try {
-      const ethersProvider = new BrowserProvider(provider);
-      const signer = await ethersProvider.getSigner();
-      const contract = new ethers.Contract(CONTRACT_ADDRESS, CONTRACT_ABI, signer);
-      
-      const hasBet = await contract.hasUserBet(address);
-      if (hasBet) {
-        setCanDecrypt(true);
-      }
-    } catch (e) {
-      console.log('No existing bet found');
-    }
-  }, [address]);
 
   // Submit encrypted bet
   const handleSubmitBet = async () => {
