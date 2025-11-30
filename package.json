@@ -1,0 +1,19 @@
+{
+  "name": "stealthbet",
+  "version": "1.0.0",
+  "private": true,
+  "workspaces": [
+    "packages/*"
+  ],
+  "scripts": {
+    "dev": "pnpm --filter nextjs-showcase dev",
+    "build": "pnpm --filter nextjs-showcase build",
+    "hardhat:compile": "pnpm --filter hardhat compile",
+    "hardhat:test": "pnpm --filter hardhat test",
+    "hardhat:deploy": "pnpm --filter hardhat run scripts/deploy.ts"
+  },
+  "devDependencies": {
+    "typescript": "^5.3.3"
+  }
+}
+
