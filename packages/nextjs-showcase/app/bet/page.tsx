@@ -28,7 +28,7 @@ const CONTRACT_ABI = [
 ];
 
 // Contract address - will be set after deployment
-const CONTRACT_ADDRESS = process.env.NEXT_PUBLIC_CONTRACT_ADDRESS || '0x0000000000000000000000000000000000000000';
+const CONTRACT_ADDRESS = '0x45df352eEA46c3C8c201C44cB67A3c28CB141E2f';
 
 // Disable static generation
 export const dynamic = 'force-dynamic';
@@ -54,7 +54,6 @@ export default function BetPage() {
   const [isDecrypting, setIsDecrypting] = useState(false);
   const [decryptedAmount, setDecryptedAmount] = useState<number | null>(null);
   const [decryptError, setDecryptError] = useState<string | null>(null);
-  const [countdown, setCountdown] = useState(0);
 
   // Check if user has existing bet
   const checkExistingBet = useCallback(async (provider: any) => {
@@ -168,19 +167,7 @@ export default function BetPage() {
 
       console.log('✅ Bet submitted successfully!');
       setSubmitSuccess(true);
-
-      // Start countdown before allowing decryption
-      setCountdown(10);
-      const timer = setInterval(() => {
-        setCountdown((prev) => {
-          if (prev <= 1) {
-            clearInterval(timer);
-            setCanDecrypt(true);
-            return 0;
-          }
-          return prev - 1;
-        });
-      }, 1000);
+      setCanDecrypt(true);
     } catch (e: any) {
       setSubmitError(e.message || 'Failed to submit bet');
       console.error('❌ Submit error:', e);
@@ -414,16 +401,6 @@ export default function BetPage() {
               </div>
             )}
           </div>
-
-          {/* Countdown */}
-          {countdown > 0 && (
-            <div className="mb-6 p-6 bg-amber-500/10 border border-amber-500/20 rounded-2xl text-center">
-              <div className="text-4xl font-bold text-amber-400 mb-2">{countdown}s</div>
-              <p className="text-amber-300 text-sm">
-                Waiting for permission sync... Please wait before decrypting
-              </p>
-            </div>
-          )}
 
           {/* Decrypt Card */}
           {canDecrypt && decryptedAmount === null && (
