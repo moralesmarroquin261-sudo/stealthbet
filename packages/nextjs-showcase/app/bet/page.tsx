@@ -43,34 +43,12 @@ export default function BetPage() {
   const [initError, setInitError] = useState<string | null>(null);
   const isInitializingRef = useRef(false);
 
-  // Bet state
+  // Simplified state machine: idle -> encrypting -> encrypted -> decrypting -> decrypted -> idle
+  type AppState = 'idle' | 'encrypting' | 'encrypted' | 'decrypting' | 'decrypted';
+  const [appState, setAppState] = useState<AppState>('idle');
   const [betAmount, setBetAmount] = useState<string>('');
-  const [isSubmitting, setIsSubmitting] = useState(false);
-  const [submitSuccess, setSubmitSuccess] = useState(false);
-  const [submitError, setSubmitError] = useState<string | null>(null);
-
-  // Decrypt state
-  const [canDecrypt, setCanDecrypt] = useState(false);
-  const [isDecrypting, setIsDecrypting] = useState(false);
-  const [isPreparingDecrypt, setIsPreparingDecrypt] = useState(false);
   const [decryptedAmount, setDecryptedAmount] = useState<number | null>(null);
-  const [decryptError, setDecryptError] = useState<string | null>(null);
-
-  // Check if user has existing bet
-  const checkExistingBet = useCallback(async (provider: any) => {
-    try {
-      const ethersProvider = new BrowserProvider(provider);
-      const signer = await ethersProvider.getSigner();
-      const contract = new ethers.Contract(CONTRACT_ADDRESS, CONTRACT_ABI, signer);
-      
-      const hasBet = await contract.hasUserBet(address);
-      console.log('📊 Checking existing bet for', address, '- Has bet:', hasBet);
-      setCanDecrypt(hasBet);
-    } catch (e) {
-      console.log('❌ Error checking existing bet:', e);
-      setCanDecrypt(false);
-    }
-  }, [address]);
+  const [errorMessage, setErrorMessage] = useState<string | null>(null);
 
   // Initialize FHEVM
   useEffect(() => {
@@ -111,9 +89,6 @@ export default function BetPage() {
 
         setFhevmInstance(instance);
         console.log('✅ FHEVM initialized successfully');
-
-        // Check if user has existing bet
-        checkExistingBet(provider);
       } catch (e: any) {
         setInitError(e.message);
         console.error('❌ FHEVM init failed:', e);
@@ -124,152 +99,134 @@ export default function BetPage() {
     };
 
     initFhevm();
-  }, [isConnected, address, walletClient, fhevmInstance, checkExistingBet]);
+  }, [isConnected, address, walletClient, fhevmInstance]);
 
-  // Submit encrypted bet
-  const handleSubmitBet = async () => {
-    if (!fhevmInstance || !walletClient || !betAmount) return;
+  // Unified action handler based on state
+  const handleAction = async () => {
+    if (!fhevmInstance || !walletClient) return;
 
-    setIsSubmitting(true);
-    setSubmitError(null);
-    setSubmitSuccess(false);
+    setErrorMessage(null);
 
-    try {
-      // Validate amount
-      const amount = parseInt(betAmount);
-      if (isNaN(amount) || amount <= 0) {
-        throw new Error('Please enter a valid amount');
+    // State: idle -> encrypting (submit bet)
+    if (appState === 'idle') {
+      if (!betAmount) {
+        setErrorMessage('Please enter a bet amount');
+        return;
       }
 
-      console.log('🔐 Encrypting bet amount:', amount);
+      setAppState('encrypting');
 
-      // Create encrypted input
-      const input = fhevmInstance.createEncryptedInput(CONTRACT_ADDRESS, address);
-      input.add32(amount);
-      const encryptedInput = await input.encrypt();
+      try {
+        const amount = parseInt(betAmount);
+        if (isNaN(amount) || amount <= 0) {
+          throw new Error('Please enter a valid amount');
+        }
 
-      console.log('✅ Encryption complete');
+        console.log('🔐 Encrypting bet amount:', amount);
 
-      // Get contract instance
-      const provider = new BrowserProvider(walletClient as any);
-      const signer = await provider.getSigner();
-      const contract = new ethers.Contract(CONTRACT_ADDRESS, CONTRACT_ABI, signer);
+        const input = fhevmInstance.createEncryptedInput(CONTRACT_ADDRESS, address);
+        input.add32(amount);
+        const encryptedInput = await input.encrypt();
 
-      // Submit to contract
-      console.log('📤 Submitting bet to contract...');
-      const tx = await contract.placeBet(
-        encryptedInput.handles[0],
-        encryptedInput.inputProof,
-        { gasLimit: 500000 } // 设置 gas limit（FHEVM 交易通常需要 300k-500k）
-      );
+        console.log('✅ Encryption complete');
 
-      console.log('⏳ Waiting for confirmation...');
-      await tx.wait();
+        const provider = new BrowserProvider(walletClient as any);
+        const signer = await provider.getSigner();
+        const contract = new ethers.Contract(CONTRACT_ADDRESS, CONTRACT_ABI, signer);
 
-      console.log('✅ Bet submitted successfully!');
-      setSubmitSuccess(true);
-      setCanDecrypt(true);
-      
-      // Clear the input after successful submission
+        console.log('📤 Submitting bet to contract...');
+        const tx = await contract.placeBet(
+          encryptedInput.handles[0],
+          encryptedInput.inputProof,
+          { gasLimit: 500000 }
+        );
+
+        console.log('⏳ Waiting for confirmation...');
+        await tx.wait();
+
+        console.log('✅ Bet submitted successfully!');
+        setAppState('encrypted');
+      } catch (e: any) {
+        setErrorMessage(e.message || 'Failed to submit bet');
+        console.error('❌ Submit error:', e);
+        setAppState('idle');
+      }
+    }
+    // State: encrypted -> decrypting (decrypt bet)
+    else if (appState === 'encrypted') {
+      setAppState('decrypting');
+
+      try {
+        console.log('🔓 Starting decryption...');
+
+        const provider = new BrowserProvider(walletClient as any);
+        const signer = await provider.getSigner();
+        const contract = new ethers.Contract(CONTRACT_ADDRESS, CONTRACT_ABI, signer);
+
+        const encryptedHandle = await contract.getMyBet();
+        console.log('📦 Retrieved encrypted handle');
+
+        const keypair = fhevmInstance.generateKeypair();
+
+        const handleContractPairs = [
+          { handle: encryptedHandle, contractAddress: CONTRACT_ADDRESS }
+        ];
+        const startTimeStamp = Math.floor(Date.now() / 1000).toString();
+        const durationDays = "10";
+        const contractAddresses = [CONTRACT_ADDRESS];
+
+        const eip712 = fhevmInstance.createEIP712(
+          keypair.publicKey,
+          contractAddresses,
+          startTimeStamp,
+          durationDays
+        );
+
+        const typesWithoutDomain = { ...eip712.types };
+        delete typesWithoutDomain.EIP712Domain;
+
+        console.log('✍️ Requesting signature...');
+        const signature = await signer.signTypedData(
+          eip712.domain,
+          typesWithoutDomain,
+          eip712.message
+        );
+
+        console.log('🔓 Decrypting...');
+
+        const decryptPromise = fhevmInstance.userDecrypt(
+          handleContractPairs,
+          keypair.privateKey,
+          keypair.publicKey,
+          signature.replace("0x", ""),
+          contractAddresses,
+          address,
+          startTimeStamp,
+          durationDays
+        );
+
+        const timeoutPromise = new Promise((_, reject) =>
+          setTimeout(() => reject(new Error('Decryption timeout')), 90000)
+        );
+
+        const decryptedResults = await Promise.race([decryptPromise, timeoutPromise]);
+        const result = (decryptedResults as any)[encryptedHandle];
+
+        console.log('✅ Decrypted result:', result);
+        setDecryptedAmount(result);
+        setAppState('decrypted');
+      } catch (e: any) {
+        setErrorMessage(e.message || 'Failed to decrypt bet');
+        console.error('❌ Decrypt error:', e);
+        setAppState('encrypted');
+      }
+    }
+    // State: decrypted -> idle (reset to submit new bet)
+    else if (appState === 'decrypted') {
+      setAppState('idle');
       setBetAmount('');
-      
-      // Reset success state after 3 seconds to allow new bets
-      setTimeout(() => {
-        setSubmitSuccess(false);
-      }, 3000);
-    } catch (e: any) {
-      setSubmitError(e.message || 'Failed to submit bet');
-      console.error('❌ Submit error:', e);
-    } finally {
-      setIsSubmitting(false);
-    }
-  };
-
-  // Decrypt bet amount
-  const handleDecrypt = async () => {
-    if (!fhevmInstance || !walletClient || isDecrypting || isPreparingDecrypt) {
-      console.log('⚠️ Decrypt already in progress or not ready');
-      return;
-    }
-
-    setIsPreparingDecrypt(true);
-    setDecryptError(null);
-
-    try {
-      console.log('🔓 Starting decryption...');
-
-      // Get contract with signer
-      const provider = new BrowserProvider(walletClient as any);
-      const signer = await provider.getSigner();
-      const contract = new ethers.Contract(CONTRACT_ADDRESS, CONTRACT_ABI, signer);
-
-      // Get encrypted handle
-      const encryptedHandle = await contract.getMyBet();
-      console.log('📦 Retrieved encrypted handle');
-
-      // Generate keypair
-      const keypair = fhevmInstance.generateKeypair();
-
-      // Prepare decrypt parameters
-      const handleContractPairs = [
-        { handle: encryptedHandle, contractAddress: CONTRACT_ADDRESS }
-      ];
-      const startTimeStamp = Math.floor(Date.now() / 1000).toString();
-      const durationDays = "10";
-      const contractAddresses = [CONTRACT_ADDRESS];
-
-      // Create EIP-712 message
-      const eip712 = fhevmInstance.createEIP712(
-        keypair.publicKey,
-        contractAddresses,
-        startTimeStamp,
-        durationDays
-      );
-
-      // Remove EIP712Domain for signing
-      const typesWithoutDomain = { ...eip712.types };
-      delete typesWithoutDomain.EIP712Domain;
-
-      console.log('✍️ Requesting signature...');
-      setIsPreparingDecrypt(false);
-      setIsDecrypting(true);
-      
-      const signature = await signer.signTypedData(
-        eip712.domain,
-        typesWithoutDomain,
-        eip712.message
-      );
-
-      console.log('🔓 Decrypting...');
-
-      // 创建解密 Promise
-      const decryptPromise = fhevmInstance.userDecrypt(
-        handleContractPairs,
-        keypair.privateKey,
-        keypair.publicKey,
-        signature.replace("0x", ""),
-        contractAddresses,
-        address,
-        startTimeStamp,
-        durationDays
-      );
-
-      // Decrypt with timeout (90 seconds)
-      const timeoutPromise = new Promise((_, reject) =>
-        setTimeout(() => reject(new Error('Decryption timeout')), 90000)
-      );
-
-      const decryptedResults = await Promise.race([decryptPromise, timeoutPromise]);
-      const result = (decryptedResults as any)[encryptedHandle];
-
-      console.log('✅ Decrypted result:', result);
-      setDecryptedAmount(result);
-    } catch (e: any) {
-      setDecryptError(e.message || 'Failed to decrypt bet');
-      console.error('❌ Decrypt error:', e);
-    } finally {
-      setIsDecrypting(false);
-      setIsPreparingDecrypt(false);
+      setDecryptedAmount(null);
+      setErrorMessage(null);
     }
   };
 
@@ -388,41 +345,110 @@ export default function BetPage() {
             </div>
           </div>
 
-          {/* Bet Input Card */}
-          <div className="bg-dark-800/50 border border-dark-700 rounded-2xl p-8 mb-6">
-            <div className="mb-6">
-              <label className="block text-white font-semibold mb-3 text-lg">
-                Enter Bet Amount
-              </label>
-              <input
-                type="number"
-                value={betAmount}
-                onChange={(e) => setBetAmount(e.target.value)}
-                placeholder="e.g., 100"
-                disabled={isSubmitting || submitSuccess}
-                className="w-full px-6 py-4 bg-dark-900 border-2 border-dark-600 focus:border-primary-500 rounded-xl text-white text-2xl font-bold placeholder-dark-400 outline-none transition-all disabled:opacity-50"
-              />
-              <p className="text-dark-400 text-sm mt-2">
-                Your bet amount will be encrypted before submission
-              </p>
-            </div>
+          {/* Main Card */}
+          <div className="bg-dark-800/50 border border-dark-700 rounded-2xl p-8">
+            {/* Input field - only show in idle or encrypting state */}
+            {(appState === 'idle' || appState === 'encrypting') && (
+              <div className="mb-6">
+                <label className="block text-white font-semibold mb-3 text-lg">
+                  Enter Bet Amount
+                </label>
+                <input
+                  type="number"
+                  value={betAmount}
+                  onChange={(e) => setBetAmount(e.target.value)}
+                  placeholder="e.g., 100"
+                  disabled={appState === 'encrypting'}
+                  className="w-full px-6 py-4 bg-dark-900 border-2 border-dark-600 focus:border-primary-500 rounded-xl text-white text-2xl font-bold placeholder-dark-400 outline-none transition-all disabled:opacity-50"
+                />
+                <p className="text-dark-400 text-sm mt-2">
+                  Your bet amount will be encrypted before submission
+                </p>
+              </div>
+            )}
 
-            <button
-              onClick={handleSubmitBet}
-              disabled={!betAmount || isSubmitting || submitSuccess}
-              className="w-full py-4 bg-primary-600 hover:bg-primary-700 disabled:bg-dark-600 disabled:cursor-not-allowed text-white font-bold text-lg rounded-xl transition-all shadow-lg hover:shadow-primary-500/50 flex items-center justify-center gap-2"
-            >
-              {isSubmitting ? (
-                <>
-                  <div className="animate-spin rounded-full h-5 w-5 border-b-2 border-white"></div>
-                  <span>Submitting...</span>
-                </>
-              ) : submitSuccess ? (
-                <>
-                  <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+            {/* Decrypted result display */}
+            {appState === 'decrypted' && decryptedAmount !== null && (
+              <div className="mb-6 text-center">
+                <div className="w-16 h-16 bg-green-500 rounded-full flex items-center justify-center mx-auto mb-4">
+                  <svg className="w-8 h-8 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                     <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
                   </svg>
-                  <span>Bet Submitted!</span>
+                </div>
+                <h3 className="text-white font-bold text-2xl mb-2">
+                  Your Bet Amount
+                </h3>
+                <div className="text-6xl font-bold text-green-400 my-6">
+                  {decryptedAmount}
+                </div>
+                <p className="text-green-200 text-sm">
+                  ✅ Successfully decrypted from blockchain
+                </p>
+              </div>
+            )}
+
+            {/* Status message for encrypted state */}
+            {appState === 'encrypted' && (
+              <div className="mb-6">
+                <div className="flex items-center gap-3 p-4 bg-green-500/10 border border-green-500/30 rounded-xl">
+                  <svg className="w-6 h-6 text-green-400 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" />
+                  </svg>
+                  <div>
+                    <p className="text-green-400 font-semibold">Bet Submitted Successfully!</p>
+                    <p className="text-green-200 text-sm mt-1">
+                      Click the button below to decrypt and view your bet amount.
+                    </p>
+                  </div>
+                </div>
+              </div>
+            )}
+
+            {/* Unified Action Button */}
+            <button
+              onClick={handleAction}
+              disabled={
+                !fhevmInstance || 
+                appState === 'encrypting' || 
+                appState === 'decrypting' ||
+                (appState === 'idle' && !betAmount)
+              }
+              className={`w-full py-4 font-bold text-lg rounded-xl transition-all shadow-lg flex items-center justify-center gap-2 ${
+                appState === 'encrypted' 
+                  ? 'bg-green-600 hover:bg-green-700 hover:shadow-green-500/50' 
+                  : appState === 'decrypted'
+                  ? 'bg-blue-600 hover:bg-blue-700 hover:shadow-blue-500/50'
+                  : 'bg-primary-600 hover:bg-primary-700 hover:shadow-primary-500/50'
+              } disabled:bg-dark-600 disabled:cursor-not-allowed text-white`}
+            >
+              {!fhevmInstance ? (
+                <>
+                  <div className="animate-spin rounded-full h-5 w-5 border-b-2 border-white"></div>
+                  <span>Initializing...</span>
+                </>
+              ) : appState === 'encrypting' ? (
+                <>
+                  <div className="animate-spin rounded-full h-5 w-5 border-b-2 border-white"></div>
+                  <span>Encrypting...</span>
+                </>
+              ) : appState === 'encrypted' ? (
+                <>
+                  <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 11V7a4 4 0 118 0m-4 8v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2z" />
+                  </svg>
+                  <span>🔓 Decrypt My Bet</span>
+                </>
+              ) : appState === 'decrypting' ? (
+                <>
+                  <div className="animate-spin rounded-full h-5 w-5 border-b-2 border-white"></div>
+                  <span>Decrypting...</span>
+                </>
+              ) : appState === 'decrypted' ? (
+                <>
+                  <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" />
+                  </svg>
+                  <span>Submit New Bet</span>
                 </>
               ) : (
                 <>
@@ -434,88 +460,13 @@ export default function BetPage() {
               )}
             </button>
 
-            {submitError && (
+            {/* Error message */}
+            {errorMessage && (
               <div className="mt-4 p-4 bg-red-500/10 border border-red-500/20 rounded-xl">
-                <p className="text-red-400 text-sm">{submitError}</p>
+                <p className="text-red-400 text-sm">{errorMessage}</p>
               </div>
             )}
           </div>
-
-          {/* Decrypt Card */}
-          {canDecrypt && decryptedAmount === null && (
-            <div className="bg-dark-800/50 border border-dark-700 rounded-2xl p-8">
-              <h3 className="text-white font-bold text-xl mb-4">
-                Decrypt Your Bet
-              </h3>
-              <p className="text-dark-300 mb-6">
-                Click the button below to decrypt and view your bet amount. 
-                You&apos;ll need to sign a message to prove ownership.
-              </p>
-
-              <button
-                onClick={handleDecrypt}
-                disabled={!fhevmInstance || isDecrypting || isPreparingDecrypt}
-                className="w-full py-4 bg-green-600 hover:bg-green-700 disabled:bg-dark-600 disabled:cursor-not-allowed text-white font-bold text-lg rounded-xl transition-all shadow-lg hover:shadow-green-500/50 flex items-center justify-center gap-2"
-              >
-                {!fhevmInstance ? (
-                  <>
-                    <div className="animate-spin rounded-full h-5 w-5 border-b-2 border-white"></div>
-                    <span>Initializing...</span>
-                  </>
-                ) : isPreparingDecrypt ? (
-                  <>
-                    <div className="animate-spin rounded-full h-5 w-5 border-b-2 border-white"></div>
-                    <span>Preparing...</span>
-                  </>
-                ) : isDecrypting ? (
-                  <>
-                    <div className="animate-spin rounded-full h-5 w-5 border-b-2 border-white"></div>
-                    <span>Decrypting...</span>
-                  </>
-                ) : (
-                  <>
-                    <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 11V7a4 4 0 118 0m-4 8v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2z" />
-                    </svg>
-                    <span>🔓 Decrypt My Bet</span>
-                  </>
-                )}
-              </button>
-
-              {decryptError && (
-                <div className="mt-4 p-4 bg-red-500/10 border border-red-500/20 rounded-xl">
-                  <p className="text-red-400 text-sm">{decryptError}</p>
-                  <button
-                    onClick={handleDecrypt}
-                    disabled={!fhevmInstance || isDecrypting || isPreparingDecrypt}
-                    className="mt-3 text-primary-400 hover:text-primary-300 text-sm font-medium disabled:opacity-50 disabled:cursor-not-allowed"
-                  >
-                    Try Again
-                  </button>
-                </div>
-              )}
-            </div>
-          )}
-
-          {/* Decrypted Result */}
-          {decryptedAmount !== null && (
-            <div className="bg-gradient-to-br from-green-500/20 to-green-600/20 border-2 border-green-500/50 rounded-2xl p-8 text-center">
-              <div className="w-16 h-16 bg-green-500 rounded-full flex items-center justify-center mx-auto mb-4">
-                <svg className="w-8 h-8 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
-                </svg>
-              </div>
-              <h3 className="text-white font-bold text-2xl mb-2">
-                Your Bet Amount
-              </h3>
-              <div className="text-6xl font-bold text-green-400 my-6">
-                {decryptedAmount}
-              </div>
-              <p className="text-green-200 text-sm">
-                ✅ Successfully decrypted from blockchain
-              </p>
-            </div>
-          )}
         </div>
       </div>
     </div>
