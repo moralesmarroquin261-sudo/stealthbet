@@ -52,6 +52,7 @@ export default function BetPage() {
   // Decrypt state
   const [canDecrypt, setCanDecrypt] = useState(false);
   const [isDecrypting, setIsDecrypting] = useState(false);
+  const [isPreparingDecrypt, setIsPreparingDecrypt] = useState(false);
   const [decryptedAmount, setDecryptedAmount] = useState<number | null>(null);
   const [decryptError, setDecryptError] = useState<string | null>(null);
 
@@ -178,9 +179,12 @@ export default function BetPage() {
 
   // Decrypt bet amount
   const handleDecrypt = async () => {
-    if (!fhevmInstance || !walletClient) return;
+    if (!fhevmInstance || !walletClient || isDecrypting || isPreparingDecrypt) {
+      console.log('⚠️ Decrypt already in progress or not ready');
+      return;
+    }
 
-    setIsDecrypting(true);
+    setIsPreparingDecrypt(true);
     setDecryptError(null);
 
     try {
@@ -219,6 +223,9 @@ export default function BetPage() {
       delete typesWithoutDomain.EIP712Domain;
 
       console.log('✍️ Requesting signature...');
+      setIsPreparingDecrypt(false);
+      setIsDecrypting(true);
+      
       const signature = await signer.signTypedData(
         eip712.domain,
         typesWithoutDomain,
@@ -254,6 +261,7 @@ export default function BetPage() {
       console.error('❌ Decrypt error:', e);
     } finally {
       setIsDecrypting(false);
+      setIsPreparingDecrypt(false);
     }
   };
 
@@ -340,13 +348,36 @@ export default function BetPage() {
       <div className="pt-24 pb-12 px-4 sm:px-6 lg:px-8">
         <div className="max-w-2xl mx-auto">
           {/* Header */}
-          <div className="text-center mb-12">
+          <div className="text-center mb-8">
             <h1 className="text-4xl font-bold text-white mb-3">
               Virtual Event Betting
             </h1>
             <p className="text-dark-300 text-lg">
               Place your bet with complete privacy
             </p>
+          </div>
+
+          {/* OKX Wallet Warning */}
+          <div className="bg-yellow-500/10 border-2 border-yellow-500/30 rounded-2xl p-6 mb-8">
+            <div className="flex items-start gap-4">
+              <div className="flex-shrink-0">
+                <svg className="w-6 h-6 text-yellow-400" fill="currentColor" viewBox="0 0 20 20">
+                  <path fillRule="evenodd" d="M8.257 3.099c.765-1.36 2.722-1.36 3.486 0l5.58 9.92c.75 1.334-.213 2.98-1.742 2.98H4.42c-1.53 0-2.493-1.646-1.743-2.98l5.58-9.92zM11 13a1 1 0 11-2 0 1 1 0 012 0zm-1-8a1 1 0 00-1 1v3a1 1 0 002 0V6a1 1 0 00-1-1z" clipRule="evenodd" />
+                </svg>
+              </div>
+              <div className="flex-1">
+                <h3 className="text-yellow-400 font-bold text-lg mb-2">
+                  ⚠️ OKX Wallet Users: Important Notice
+                </h3>
+                <p className="text-yellow-200 text-sm leading-relaxed mb-3">
+                  OKX Wallet has flagged this site as risky and <strong>blocks decryption signatures</strong>. 
+                  While you can submit encrypted bets, you won&apos;t be able to decrypt them.
+                </p>
+                <p className="text-yellow-200 text-sm leading-relaxed font-semibold">
+                  ✅ Solution: Please switch to <strong>MetaMask</strong> or another wallet to test the full decryption feature.
+                </p>
+              </div>
+            </div>
           </div>
 
           {/* Bet Input Card */}
@@ -415,10 +446,20 @@ export default function BetPage() {
 
               <button
                 onClick={handleDecrypt}
-                disabled={isDecrypting}
+                disabled={!fhevmInstance || isDecrypting || isPreparingDecrypt}
                 className="w-full py-4 bg-green-600 hover:bg-green-700 disabled:bg-dark-600 disabled:cursor-not-allowed text-white font-bold text-lg rounded-xl transition-all shadow-lg hover:shadow-green-500/50 flex items-center justify-center gap-2"
               >
-                {isDecrypting ? (
+                {!fhevmInstance ? (
+                  <>
+                    <div className="animate-spin rounded-full h-5 w-5 border-b-2 border-white"></div>
+                    <span>Initializing...</span>
+                  </>
+                ) : isPreparingDecrypt ? (
+                  <>
+                    <div className="animate-spin rounded-full h-5 w-5 border-b-2 border-white"></div>
+                    <span>Preparing...</span>
+                  </>
+                ) : isDecrypting ? (
                   <>
                     <div className="animate-spin rounded-full h-5 w-5 border-b-2 border-white"></div>
                     <span>Decrypting...</span>
@@ -438,7 +479,8 @@ export default function BetPage() {
                   <p className="text-red-400 text-sm">{decryptError}</p>
                   <button
                     onClick={handleDecrypt}
-                    className="mt-3 text-primary-400 hover:text-primary-300 text-sm font-medium"
+                    disabled={!fhevmInstance || isDecrypting || isPreparingDecrypt}
+                    className="mt-3 text-primary-400 hover:text-primary-300 text-sm font-medium disabled:opacity-50 disabled:cursor-not-allowed"
                   >
                     Try Again
                   </button>
