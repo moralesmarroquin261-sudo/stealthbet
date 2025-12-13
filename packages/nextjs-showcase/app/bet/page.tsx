@@ -64,11 +64,11 @@ export default function BetPage() {
       const contract = new ethers.Contract(CONTRACT_ADDRESS, CONTRACT_ABI, signer);
       
       const hasBet = await contract.hasUserBet(address);
-      if (hasBet) {
-        setCanDecrypt(true);
-      }
+      console.log('📊 Checking existing bet for', address, '- Has bet:', hasBet);
+      setCanDecrypt(hasBet);
     } catch (e) {
-      console.log('No existing bet found');
+      console.log('❌ Error checking existing bet:', e);
+      setCanDecrypt(false);
     }
   }, [address]);
 
@@ -169,6 +169,14 @@ export default function BetPage() {
       console.log('✅ Bet submitted successfully!');
       setSubmitSuccess(true);
       setCanDecrypt(true);
+      
+      // Clear the input after successful submission
+      setBetAmount('');
+      
+      // Reset success state after 3 seconds to allow new bets
+      setTimeout(() => {
+        setSubmitSuccess(false);
+      }, 3000);
     } catch (e: any) {
       setSubmitError(e.message || 'Failed to submit bet');
       console.error('❌ Submit error:', e);
