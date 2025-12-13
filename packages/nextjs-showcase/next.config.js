@@ -2,9 +2,6 @@
 const nextConfig = {
   transpilePackages: ['@fhevm-sdk'],
   
-  // Enable Turbopack compatibility (Next.js 16+)
-  turbopack: {},
-  
   // CORS headers for FHEVM WebAssembly threads support
   async headers() {
     return [
